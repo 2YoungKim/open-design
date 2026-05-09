@@ -661,7 +661,7 @@ describe('SettingsDialog media providers interactions', () => {
     expect(screen.getAllByText('Configured').length).toBeGreaterThanOrEqual(2);
   });
 
-  it('renders unsupported providers as disabled rows', () => {
+  it('renders unsupported providers but allows credential input', () => {
     renderSettingsDialog(
       { mode: 'daemon', agentId: 'codex' },
       { initialSection: 'media' },
@@ -670,8 +670,8 @@ describe('SettingsDialog media providers interactions', () => {
     expect(screen.getAllByText('Unsupported').length).toBeGreaterThan(0);
     const bflApiKey = screen.getByLabelText('Black Forest Labs API key') as HTMLInputElement;
     const bflBaseUrl = screen.getByLabelText('Black Forest Labs Base URL') as HTMLInputElement;
-    expect(bflApiKey.disabled).toBe(true);
-    expect(bflBaseUrl.disabled).toBe(true);
+    expect(bflApiKey.disabled).toBe(false);
+    expect(bflBaseUrl.disabled).toBe(false);
   });
 
   it('clears an existing provider config and removes it from the persisted payload', async () => {
