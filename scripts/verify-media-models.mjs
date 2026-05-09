@@ -40,9 +40,19 @@ function extractIds(source, name) {
   const m = source.match(re);
   if (!m) return null;
   const ids = [];
-  const idRe = /\bid:\s*['\"]([^'\"]+)['\"]/g;
-  let id;
-  while ((id = idRe.exec(m[1])) != null) ids.push(id[1]);
+  const objectRe = /\{[^{}]*\}/g;
+  let obj;
+  while ((obj = objectRe.exec(m[1])) != null) {
+    const idMatch = /\bid:\s*['\"]([^'\"]+)['\"]/.exec(obj[0]);
+    if (idMatch) {
+      const capMatch = /\bcaps:\s*\[([^\]]*)\]/.exec(obj[0]);
+      let capStr = '';
+      if (capMatch) {
+        capStr = '|caps:' + capMatch[1].replace(/['\"\s]/g, '').split(',').filter(Boolean).sort().join(',');
+      }
+      ids.push(idMatch[1] + capStr);
+    }
+  }
   return ids;
 }
 
@@ -133,10 +143,10 @@ const jsDurations = extractNumberArray(js, 'AUDIO_DURATIONS_SEC');
 if (!tsImage || !tsVideo || !tsAudio || !tsProviders) parseError('failed to parse TS registry');
 if (!jsImage || !jsVideo || !jsAudio || !jsProviders) parseError('failed to parse JS registry');
 
-dedupCheck('IMAGE_MODELS (ts)', tsImage);
-dedupCheck('VIDEO_MODELS (ts)', tsVideo);
-dedupCheck('IMAGE_MODELS (js)', jsImage);
-dedupCheck('VIDEO_MODELS (js)', jsVideo);
+dedupCheck('IMAGE_MODELS (ts)', tsImage.map(i => i.split('|')[0]));
+dedupCheck('VIDEO_MODELS (ts)', tsVideo.map(i => i.split('|')[0]));
+dedupCheck('IMAGE_MODELS (js)', jsImage.map(i => i.split('|')[0]));
+dedupCheck('VIDEO_MODELS (js)', jsVideo.map(i => i.split('|')[0]));
 dedupCheck('MEDIA_PROVIDERS (ts)', tsProviders.map(p => p.split(':')[0]));
 dedupCheck('MEDIA_PROVIDERS (js)', jsProviders.map(p => p.split(':')[0]));
 for (const kind of ['music', 'speech', 'sfx']) {
