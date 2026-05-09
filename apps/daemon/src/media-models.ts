@@ -109,8 +109,8 @@ export const VIDEO_MODELS: MediaModel[] = [
   { id: 'minimax-video-01', label: 'video-01', hint: 'MiniMax · Hailuo', provider: 'minimax', caps: ['t2v', 'i2v'] },
   { id: 'hyperframes-html', label: 'hyperframes-html', hint: 'HyperFrames · local HTML renderer', provider: 'hyperframes', caps: ['t2v'] },
 
-  { id: 'openrouter/bytedance/seedance-2.0', label: 'seedance-2.0 (OR)', hint: 'OpenRouter · ByteDance', provider: 'openrouter', caps: ['t2v'] },
-  { id: 'openrouter/google/veo-3.1', label: 'veo-3.1 (OR)', hint: 'OpenRouter · Google', provider: 'openrouter', caps: ['t2v'] },
+  { id: 'openrouter/bytedance/seedance-2.0', label: 'seedance-2.0 (OR)', hint: 'OpenRouter · ByteDance', provider: 'openrouter', caps: ['t2v', 'i2v'] },
+  { id: 'openrouter/google/veo-3.1', label: 'veo-3.1 (OR)', hint: 'OpenRouter · Google', provider: 'openrouter', caps: ['t2v', 'i2v', 'audio'] },
   { id: 'openrouter/alibaba/wan-2.7', label: 'wan-2.7 (OR)', hint: 'OpenRouter · Alibaba', provider: 'openrouter', caps: ['t2v', 'i2v'] },
 ];
 
