@@ -244,6 +244,21 @@ export const KNOWN_PROVIDERS: KnownProvider[] = [
     model: 'mimo-v2.5-pro',
     models: ['mimo-v2.5-pro'],
   },
+  {
+    label: 'OpenRouter',
+    protocol: 'openai',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    model: 'anthropic/claude-sonnet-4-5',
+    models: [
+      'anthropic/claude-sonnet-4-5',
+      'anthropic/claude-haiku-4-5',
+      'openai/gpt-4o',
+      'openai/o3',
+      'google/gemini-2.0-flash-001',
+      'deepseek/deepseek-chat-v3-0324',
+      'meta-llama/llama-4-maverick',
+    ],
+  },
 ];
 
 function normalizePet(input: Partial<PetConfig> | undefined): PetConfig {

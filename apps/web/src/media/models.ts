@@ -40,6 +40,7 @@ export type MediaProviderId =
   | 'midjourney'
   | 'kling'
   | 'minimax'
+  | 'openrouter'
   | 'suno'
   | 'udio'
   | 'elevenlabs'
@@ -131,6 +132,14 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
     integrated: false,
     defaultBaseUrl: 'https://fal.run',
     docsUrl: 'https://fal.ai/dashboard/keys',
+  },
+  {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    hint: 'Unified gateway — FLUX / Seedance / Veo / Gemini Image',
+    integrated: false,
+    defaultBaseUrl: 'https://openrouter.ai/api/v1',
+    docsUrl: 'https://openrouter.ai/settings/keys',
   },
   {
     id: 'replicate',
@@ -332,6 +341,11 @@ export const IMAGE_MODELS: MediaModel[] = [
 
   // Midjourney via community proxies.
   { id: 'midjourney-v7', label: 'midjourney-v7', hint: 'Midjourney · via proxy', provider: 'midjourney', caps: ['t2i'] },
+
+  // OpenRouter — unified gateway for image generation models.
+  { id: 'openrouter/google/gemini-2.5-flash-image', label: 'gemini-flash-image (OR)', hint: 'OpenRouter · Gemini', provider: 'openrouter', caps: ['t2i'] },
+  { id: 'openrouter/black-forest-labs/flux-1.1-pro', label: 'flux-1.1-pro (OR)', hint: 'OpenRouter · BFL', provider: 'openrouter', caps: ['t2i'] },
+  { id: 'openrouter/recraft/recraft-v3', label: 'recraft-v3 (OR)', hint: 'OpenRouter · Recraft', provider: 'openrouter', caps: ['t2i'] },
 ];
 
 /**
@@ -402,6 +416,11 @@ export const VIDEO_MODELS: MediaModel[] = [
   // MiniMax video.
   { id: 'minimax-video-01', label: 'video-01', hint: 'MiniMax · Hailuo', provider: 'minimax', caps: ['t2v', 'i2v'] },
   { id: 'hyperframes-html', label: 'hyperframes-html', hint: 'HyperFrames · local HTML renderer', provider: 'hyperframes', caps: ['t2v'] },
+
+  // OpenRouter — unified gateway for video generation models.
+  { id: 'openrouter/bytedance/seedance-2.0', label: 'seedance-2.0 (OR)', hint: 'OpenRouter · ByteDance', provider: 'openrouter', caps: ['t2v'] },
+  { id: 'openrouter/google/veo-3.1', label: 'veo-3.1 (OR)', hint: 'OpenRouter · Google', provider: 'openrouter', caps: ['t2v'] },
+  { id: 'openrouter/alibaba/wan-2.7', label: 'wan-2.7 (OR)', hint: 'OpenRouter · Alibaba', provider: 'openrouter', caps: ['t2v', 'i2v'] },
 ];
 
 export const AUDIO_MODELS_BY_KIND: Record<AudioKind, MediaModel[]> = {

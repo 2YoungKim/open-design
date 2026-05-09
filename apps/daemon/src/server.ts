@@ -6620,6 +6620,12 @@ export async function startServer({
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`,
+          // OpenRouter recommends these headers for app attribution
+          // (https://openrouter.ai/docs/app-attribution).
+          ...(baseUrl.includes('openrouter') ? {
+            'HTTP-Referer': 'https://opendesign.dev',
+            'X-Title': 'Open Design',
+          } : {}),
         },
         body: JSON.stringify(payload),
         redirect: 'error',
