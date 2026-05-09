@@ -65,6 +65,23 @@ function extractAudioIds(source) {
   return out;
 }
 
+function extractProviders(source) {
+  const re = /export const MEDIA_PROVIDERS[^=]*=\s*\[([\s\S]*?)\];/m;
+  const m = source.match(re);
+  if (!m) return null;
+  const providers = [];
+  const objectRe = /\{[^{}]*\}/g;
+  let obj;
+  while ((obj = objectRe.exec(m[1])) != null) {
+    const idMatch = /\bid:\s*['"]([^'"]+)['"]/.exec(obj[0]);
+    const intMatch = /\bintegrated:\s*(true|false)/.exec(obj[0]);
+    if (idMatch && intMatch) {
+      providers.push(`${idMatch[1]}:${intMatch[1]}`);
+    }
+  }
+  return providers;
+}
+
 function extractNumberArray(source, name) {
   const re = new RegExp(`export const ${name}[^=]*=\\s*\\[([^\\]]*)\\]`, 'm');
   const m = source.match(re);
@@ -102,22 +119,26 @@ try {
 const tsImage = extractIds(ts, 'IMAGE_MODELS');
 const tsVideo = extractIds(ts, 'VIDEO_MODELS');
 const tsAudio = extractAudioIds(ts);
+const tsProviders = extractProviders(ts);
 const tsLengths = extractNumberArray(ts, 'VIDEO_LENGTHS_SEC');
 const tsDurations = extractNumberArray(ts, 'AUDIO_DURATIONS_SEC');
 
 const jsImage = extractIds(js, 'IMAGE_MODELS');
 const jsVideo = extractIds(js, 'VIDEO_MODELS');
 const jsAudio = extractAudioIds(js);
+const jsProviders = extractProviders(js);
 const jsLengths = extractNumberArray(js, 'VIDEO_LENGTHS_SEC');
 const jsDurations = extractNumberArray(js, 'AUDIO_DURATIONS_SEC');
 
-if (!tsImage || !tsVideo || !tsAudio) parseError('failed to parse TS registry');
-if (!jsImage || !jsVideo || !jsAudio) parseError('failed to parse JS registry');
+if (!tsImage || !tsVideo || !tsAudio || !tsProviders) parseError('failed to parse TS registry');
+if (!jsImage || !jsVideo || !jsAudio || !jsProviders) parseError('failed to parse JS registry');
 
 dedupCheck('IMAGE_MODELS (ts)', tsImage);
 dedupCheck('VIDEO_MODELS (ts)', tsVideo);
 dedupCheck('IMAGE_MODELS (js)', jsImage);
 dedupCheck('VIDEO_MODELS (js)', jsVideo);
+dedupCheck('MEDIA_PROVIDERS (ts)', tsProviders.map(p => p.split(':')[0]));
+dedupCheck('MEDIA_PROVIDERS (js)', jsProviders.map(p => p.split(':')[0]));
 for (const kind of ['music', 'speech', 'sfx']) {
   dedupCheck(`AUDIO_MODELS_BY_KIND.${kind} (ts)`, tsAudio[kind]);
   dedupCheck(`AUDIO_MODELS_BY_KIND.${kind} (js)`, jsAudio[kind]);
@@ -137,6 +158,8 @@ const dImage = diffArrays('IMAGE_MODELS', tsImage, jsImage);
 if (dImage) diffs.push(dImage);
 const dVideo = diffArrays('VIDEO_MODELS', tsVideo, jsVideo);
 if (dVideo) diffs.push(dVideo);
+const dProviders = diffArrays('MEDIA_PROVIDERS', tsProviders, jsProviders);
+if (dProviders) diffs.push(dProviders);
 for (const kind of ['music', 'speech', 'sfx']) {
   const d = diffArrays(`AUDIO_MODELS_BY_KIND.${kind}`, tsAudio[kind], jsAudio[kind]);
   if (d) diffs.push(d);
