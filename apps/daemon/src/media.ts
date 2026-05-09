@@ -27,6 +27,10 @@
 //                              /v1/images/generations for grok-imagine-image
 //                              and async /v1/videos/generations + GET poll
 //                              for grok-imagine-video (t2v + i2v + audio)
+//   * provider 'openrouter' → OpenRouter unified video generation API:
+//                              async POST /api/v1/videos + polling for
+//                              Seedance 2.0, Veo 3.1, Wan 2.7 etc.
+//                              (video only — image uses chat completions)
 //
 // The fallback stub handlers are gated behind OD_MEDIA_ALLOW_STUBS=1; in
 // release builds they throw StubProviderDisabledError (mapped to HTTP
@@ -441,6 +445,11 @@ export async function generateMedia(args: {
       suggestedExt = result.suggestedExt;
     } else if (def.provider === 'fishaudio' && surface === 'audio') {
       const result = await renderFishAudioTTS(ctx, credentials);
+      bytes = result.bytes;
+      providerNote = result.providerNote;
+      suggestedExt = result.suggestedExt;
+    } else if (def.provider === 'openrouter' && surface === 'video') {
+      const result = await renderOpenRouterVideo(ctx, credentials, args.onProgress);
       bytes = result.bytes;
       providerNote = result.providerNote;
       suggestedExt = result.suggestedExt;
@@ -1351,6 +1360,216 @@ function grokAspectFor(aspect?: string): string {
   // xAI accepts a wide list (1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 2:1,
   // 1:2, 19.5:9, 9:19.5, 20:9, 9:20, auto). Our MEDIA_ASPECTS subset
   // is a strict subset — pass through known values, otherwise 16:9.
+  if (
+    aspect === '1:1'
+    || aspect === '16:9'
+    || aspect === '9:16'
+    || aspect === '4:3'
+    || aspect === '3:4'
+  ) {
+    return aspect;
+  }
+  return '16:9';
+}
+
+// ---------------------------------------------------------------------------
+// Provider: OpenRouter — Unified video generation gateway (asynchronous).
+//
+// Docs: https://openrouter.ai/docs/guides/overview/multimodal/video-generation
+//
+// OpenRouter's video API is a normalised, asynchronous interface sitting
+// in front of multiple upstream providers (ByteDance Seedance 2.0,
+// Google Veo 3.1, Alibaba Wan 2.7, etc.). The workflow mirrors the
+// Grok / Volcengine pattern used elsewhere in this file:
+//
+//   1. POST /api/v1/videos  → {id, polling_url, status:"pending"}
+//   2. Poll GET  polling_url until status flips to completed/failed
+//   3. Fetch the binary from unsigned_urls[0]
+//
+// Model IDs in our registry are prefixed with `openrouter/` (e.g.
+// `openrouter/bytedance/seedance-2.0`); we strip the prefix before
+// sending the wire request so OpenRouter receives the canonical slug
+// (e.g. `bytedance/seedance-2.0`).
+//
+// Image-to-video (i2v) is supported via `frame_images` with
+// `frame_type: "first_frame"` — the dispatcher already resolved the
+// project image into a base64 data URL in `ctx.imageRef`.
+// ---------------------------------------------------------------------------
+
+async function renderOpenRouterVideo(
+  ctx: MediaContext,
+  credentials: ProviderConfig,
+  onProgress?: ProgressFn,
+): Promise<RenderResult> {
+  if (!credentials.apiKey) {
+    throw new Error(
+      'no OpenRouter API key — configure it in Settings or set OPENROUTER_API_KEY',
+    );
+  }
+  const baseUrl = (credentials.baseUrl || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
+
+  // Strip the `openrouter/` catalogue prefix so the wire model name
+  // matches OpenRouter's canonical slug (e.g. `bytedance/seedance-2.0`).
+  const wireModel = ctx.model.startsWith('openrouter/')
+    ? ctx.model.slice('openrouter/'.length)
+    : ctx.model;
+
+  const aspectRatio = openRouterAspectFor(ctx.aspect);
+
+  // Build the request body.
+  const body: Record<string, unknown> = {
+    model: wireModel,
+    prompt: ctx.prompt || 'A short cinematic clip.',
+    aspect_ratio: aspectRatio,
+    resolution: '720p',
+  };
+
+  // Image-to-video: pass the reference image as a first_frame via
+  // OpenRouter's `frame_images` array. Seedance 2.0 and Wan 2.7
+  // support this mode.
+  if (ctx.imageRef && ctx.imageRef.dataUrl) {
+    body.frame_images = [
+      {
+        type: 'image_url',
+        image_url: { url: ctx.imageRef.dataUrl },
+        frame_type: 'first_frame',
+      },
+    ];
+  }
+
+  // ── Step 1: Submit the generation request ──────────────────────────
+  const submitResp = await fetch(`${baseUrl}/videos`, {
+    method: 'POST',
+    headers: {
+      'authorization': `Bearer ${credentials.apiKey}`,
+      'content-type': 'application/json',
+      // OpenRouter attribution headers per
+      // https://openrouter.ai/docs/app-attribution
+      'HTTP-Referer': 'https://opendesign.dev',
+      'X-Title': 'Open Design',
+    },
+    body: JSON.stringify(body),
+  });
+  const submitText = await submitResp.text();
+  if (!submitResp.ok) {
+    throw new Error(
+      `openrouter video submit ${submitResp.status}: ${truncate(submitText, 240)}`,
+    );
+  }
+  let submitData: any;
+  try {
+    submitData = JSON.parse(submitText);
+  } catch {
+    throw new Error(`openrouter video non-JSON: ${truncate(submitText, 200)}`);
+  }
+
+  const jobId = submitData?.id;
+  const pollingUrl = submitData?.polling_url;
+  if (!jobId || !pollingUrl) {
+    throw new Error(
+      `openrouter video submit returned no job id or polling_url: ${truncate(submitText, 200)}`,
+    );
+  }
+
+  // ── Step 2: Poll until completion ──────────────────────────────────
+  const startedAt = Date.now();
+  const configuredMaxMs = Number(process.env.OD_OPENROUTER_VIDEO_MAX_POLL_MS);
+  const maxMs =
+    Number.isFinite(configuredMaxMs) && configuredMaxMs >= 60_000
+      ? configuredMaxMs
+      : 10 * 60 * 1000; // 10 minutes default
+
+  let lastStatus = submitData?.status || 'pending';
+  let videoUrls: string[] | null = null;
+
+  if (typeof onProgress === 'function') {
+    const mode = ctx.imageRef ? 'i2v' : 't2v';
+    onProgress(
+      `openrouter ${mode} job ${jobId} (${wireModel}) accepted; polling status…`,
+    );
+  }
+
+  while (Date.now() - startedAt < maxMs) {
+    await sleep(8000);
+    const pollResp = await fetch(pollingUrl, {
+      headers: {
+        'authorization': `Bearer ${credentials.apiKey}`,
+        'HTTP-Referer': 'https://opendesign.dev',
+        'X-Title': 'Open Design',
+      },
+    });
+    const pollText = await pollResp.text();
+    if (!pollResp.ok) {
+      throw new Error(
+        `openrouter poll ${pollResp.status}: ${truncate(pollText, 240)}`,
+      );
+    }
+    let pollData: any;
+    try {
+      pollData = JSON.parse(pollText);
+    } catch {
+      throw new Error(`openrouter poll non-JSON: ${truncate(pollText, 200)}`);
+    }
+
+    lastStatus = pollData?.status || '';
+    if (typeof onProgress === 'function') {
+      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+      onProgress(
+        `openrouter job ${jobId} status=${lastStatus || 'pending'} (elapsed ${elapsedSec}s)`,
+      );
+    }
+
+    if (lastStatus === 'completed') {
+      videoUrls = pollData?.unsigned_urls || null;
+      break;
+    }
+    if (
+      lastStatus === 'failed'
+      || lastStatus === 'expired'
+      || lastStatus === 'cancelled'
+    ) {
+      const reasonRaw =
+        pollData?.error?.message || pollData?.error || lastStatus;
+      const reason =
+        typeof reasonRaw === 'string' ? reasonRaw : JSON.stringify(reasonRaw);
+      throw new Error(`openrouter job ${lastStatus}: ${reason}`);
+    }
+  }
+
+  if (!videoUrls || videoUrls.length === 0) {
+    const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+    const ceilingSec = Math.round(maxMs / 1000);
+    throw new Error(
+      `openrouter video timed out after ${elapsedSec}s waiting for status=completed `
+      + `(last status: ${lastStatus || 'pending'}, ceiling ${ceilingSec}s). `
+      + `If your jobs legitimately need longer, raise OD_OPENROUTER_VIDEO_MAX_POLL_MS.`,
+    );
+  }
+
+  // ── Step 3: Download the video binary ──────────────────────────────
+  const contentUrl = videoUrls[0]!;
+  const dlResp = await fetch(contentUrl, {
+    headers: {
+      'authorization': `Bearer ${credentials.apiKey}`,
+    },
+  });
+  if (!dlResp.ok) {
+    throw new Error(`openrouter video download ${dlResp.status}`);
+  }
+  const arr = await dlResp.arrayBuffer();
+  const bytes = Buffer.from(arr);
+
+  return {
+    bytes,
+    providerNote: `openrouter/${wireModel} · ${aspectRatio} · ${bytes.length} bytes`,
+    suggestedExt: '.mp4',
+  };
+}
+
+function openRouterAspectFor(aspect?: string): string {
+  // OpenRouter normalises aspect ratios across providers. Our
+  // MEDIA_ASPECTS vocabulary is a strict subset — pass known values
+  // through, default to 16:9 for video.
   if (
     aspect === '1:1'
     || aspect === '16:9'

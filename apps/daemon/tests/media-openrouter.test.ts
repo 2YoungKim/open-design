@@ -1,0 +1,287 @@
+// Unit tests for the OpenRouter video generation adapter in media.ts.
+//
+// These tests mock the global `fetch` to simulate:
+//   1. A successful submit → poll → download cycle (t2v)
+//   2. A failed job (status=failed / expired)
+//   3. Model ID prefix stripping (openrouter/ → bare slug)
+//   4. Attribution headers (HTTP-Referer, X-Title) on every request
+//   5. Progress callback invocation
+
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { generateMedia } from '../src/media.js';
+
+// Tiny fake MP4 header — just enough to assert the result has bytes.
+const FAKE_MP4 = Buffer.from([
+  0x00, 0x00, 0x00, 0x1c, 0x66, 0x74, 0x79, 0x70,
+  0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x02, 0x00,
+]);
+
+describe('openrouter video generation', () => {
+  let root: string;
+  let projectRoot: string;
+  let projectsRoot: string;
+  const realFetch = globalThis.fetch;
+  const originalMediaConfigDir = process.env.OD_MEDIA_CONFIG_DIR;
+  const originalDataDir = process.env.OD_DATA_DIR;
+
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'od-openrouter-video-'));
+    projectRoot = path.join(root, 'project-root');
+    projectsRoot = path.join(projectRoot, '.od', 'projects');
+    await mkdir(projectsRoot, { recursive: true });
+    delete process.env.OD_MEDIA_CONFIG_DIR;
+    delete process.env.OD_DATA_DIR;
+    process.env.OD_OPENROUTER_API_KEY = 'sk-or-test-key-1234';
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = realFetch;
+    delete process.env.OD_OPENROUTER_API_KEY;
+    if (originalMediaConfigDir == null) {
+      delete process.env.OD_MEDIA_CONFIG_DIR;
+    } else {
+      process.env.OD_MEDIA_CONFIG_DIR = originalMediaConfigDir;
+    }
+    if (originalDataDir == null) {
+      delete process.env.OD_DATA_DIR;
+    } else {
+      process.env.OD_DATA_DIR = originalDataDir;
+    }
+    await rm(root, { recursive: true, force: true });
+  });
+
+  async function writeConfig(data: unknown) {
+    const file = path.join(projectRoot, '.od', 'media-config.json');
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, JSON.stringify(data), 'utf8');
+  }
+
+  const COMMON_ARGS = {
+    surface: 'video' as const,
+    model: 'openrouter/bytedance/seedance-2.0',
+    prompt: 'A golden retriever running on the beach at sunset',
+    aspect: '16:9',
+    output: 'beach-dog.mp4',
+  };
+
+  function argsWithPaths() {
+    return {
+      ...COMMON_ARGS,
+      projectRoot,
+      projectsRoot,
+      projectId: 'project-1',
+    };
+  }
+
+  // ─── helpers to build mock fetch responses ────────────────────────
+
+  function jsonResp(data: unknown, status = 200) {
+    return new Response(JSON.stringify(data), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  function mp4Resp() {
+    return new Response(FAKE_MP4, {
+      status: 200,
+      headers: { 'content-type': 'video/mp4' },
+    });
+  }
+
+  // ─── tests ────────────────────────────────────────────────────────
+
+  it('completes a submit → poll → download cycle for t2v', async () => {
+    const fetchMock = vi.fn()
+      // 1. Submit
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-seedance-01',
+        polling_url: 'https://openrouter.ai/api/v1/videos/job-seedance-01',
+        status: 'pending',
+      }, 202))
+      // 2. Poll: in_progress
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-seedance-01',
+        status: 'in_progress',
+      }))
+      // 3. Poll: completed
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-seedance-01',
+        status: 'completed',
+        unsigned_urls: ['https://openrouter.ai/storage/job-seedance-01/video.mp4'],
+        usage: { cost: 0.25 },
+      }))
+      // 4. Download
+      .mockResolvedValueOnce(mp4Resp());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await generateMedia(argsWithPaths());
+
+    expect(result.surface).toBe('video');
+    expect(result.providerId).toBe('openrouter');
+    expect(result.providerNote).toContain('bytedance/seedance-2.0');
+    expect(result.providerNote).toContain('16:9');
+    expect(result.name).toBe('beach-dog.mp4');
+
+    // The file should exist on disk
+    const bytes = await readFile(path.join(projectsRoot, 'project-1', 'beach-dog.mp4'));
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it('strips the openrouter/ prefix for the wire model name', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-strip',
+        polling_url: 'https://openrouter.ai/api/v1/videos/job-strip',
+        status: 'pending',
+      }, 202))
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-strip',
+        status: 'completed',
+        unsigned_urls: ['https://example.com/dl.mp4'],
+      }))
+      .mockResolvedValueOnce(mp4Resp());
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generateMedia(argsWithPaths());
+
+    // Submit call body should have the bare slug
+    const [, submitOpts] = fetchMock.mock.calls[0]!;
+    const submitBody = JSON.parse(submitOpts.body);
+    expect(submitBody.model).toBe('bytedance/seedance-2.0');
+    // Must NOT be 'openrouter/bytedance/seedance-2.0'
+    expect(submitBody.model).not.toContain('openrouter/');
+  });
+
+  it('sends OpenRouter attribution headers on submit and poll requests', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-hdr',
+        polling_url: 'https://openrouter.ai/api/v1/videos/job-hdr',
+        status: 'pending',
+      }, 202))
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-hdr',
+        status: 'completed',
+        unsigned_urls: ['https://example.com/dl.mp4'],
+      }))
+      .mockResolvedValueOnce(mp4Resp());
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generateMedia(argsWithPaths());
+
+    // Submit headers
+    const submitHeaders = fetchMock.mock.calls[0]![1].headers;
+    expect(submitHeaders['HTTP-Referer']).toBe('https://opendesign.dev');
+    expect(submitHeaders['X-Title']).toBe('Open Design');
+    expect(submitHeaders.authorization).toBe('Bearer sk-or-test-key-1234');
+
+    // Poll headers
+    const pollHeaders = fetchMock.mock.calls[1]![1].headers;
+    expect(pollHeaders['HTTP-Referer']).toBe('https://opendesign.dev');
+    expect(pollHeaders['X-Title']).toBe('Open Design');
+  });
+
+  it('throws on a failed job with error details', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-fail',
+        polling_url: 'https://openrouter.ai/api/v1/videos/job-fail',
+        status: 'pending',
+      }, 202))
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-fail',
+        status: 'failed',
+        error: 'Content policy violation',
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(generateMedia(argsWithPaths())).rejects.toThrow(
+      /openrouter job failed.*Content policy violation/,
+    );
+  });
+
+  it('throws on an expired job', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-exp',
+        polling_url: 'https://openrouter.ai/api/v1/videos/job-exp',
+        status: 'pending',
+      }, 202))
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-exp',
+        status: 'expired',
+        error: { message: 'Job exceeded maximum time to live' },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(generateMedia(argsWithPaths())).rejects.toThrow(
+      /openrouter job expired/,
+    );
+  });
+
+  it('throws on a submit-level HTTP error', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResp(
+        { error: { message: 'invalid API key' } },
+        401,
+      ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(generateMedia(argsWithPaths())).rejects.toThrow(
+      /openrouter video submit 401/,
+    );
+  });
+
+  it('invokes onProgress during polling', async () => {
+    const onProgress = vi.fn();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-prog',
+        polling_url: 'https://openrouter.ai/api/v1/videos/job-prog',
+        status: 'pending',
+      }, 202))
+      .mockResolvedValueOnce(jsonResp({ id: 'job-prog', status: 'in_progress' }))
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-prog',
+        status: 'completed',
+        unsigned_urls: ['https://example.com/dl.mp4'],
+      }))
+      .mockResolvedValueOnce(mp4Resp());
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generateMedia({ ...argsWithPaths(), onProgress });
+
+    // At least: 1 "accepted" + 2 poll ticks
+    expect(onProgress).toHaveBeenCalledTimes(3);
+    expect(onProgress.mock.calls[0]![0]).toContain('accepted');
+    expect(onProgress.mock.calls[0]![0]).toContain('seedance-2.0');
+    expect(onProgress.mock.calls[1]![0]).toContain('in_progress');
+  });
+
+  it('uses the correct video endpoint URL', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-url',
+        polling_url: 'https://openrouter.ai/api/v1/videos/job-url',
+        status: 'pending',
+      }, 202))
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-url',
+        status: 'completed',
+        unsigned_urls: ['https://example.com/dl.mp4'],
+      }))
+      .mockResolvedValueOnce(mp4Resp());
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generateMedia(argsWithPaths());
+
+    // Submit URL must be the /videos endpoint
+    const submitUrl = fetchMock.mock.calls[0]![0] as string;
+    expect(submitUrl).toBe('https://openrouter.ai/api/v1/videos');
+  });
+});
