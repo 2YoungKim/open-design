@@ -1673,11 +1673,19 @@ async function renderOpenRouterVideo(
   }
 
   // ── Step 3: Download the video binary ──────────────────────────────
-  // unsigned_urls are pre-authorised by OpenRouter — do NOT send our
-  // API key to the file host, as that would leak credentials to a
-  // third-party CDN/storage origin.
+  // unsigned_urls are often third-party CDNs where sending our API key
+  // would leak credentials. However, sometimes OpenRouter returns a proxied
+  // openrouter.ai URL that still requires authorization. We only attach the
+  // auth header if the host is explicitly allowlisted as openrouter.ai.
   const contentUrl = videoUrls[0]!;
-  const dlResp = await fetch(contentUrl);
+  const parsedContentUrl = new URL(contentUrl);
+
+  const dlHeaders: Record<string, string> = {};
+  if (parsedContentUrl.hostname === 'openrouter.ai') {
+    dlHeaders['authorization'] = `Bearer ${credentials.apiKey}`;
+  }
+
+  const dlResp = await fetch(contentUrl, { headers: dlHeaders });
   if (!dlResp.ok) {
     throw new Error(`openrouter video download ${dlResp.status}`);
   }

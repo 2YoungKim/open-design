@@ -285,7 +285,7 @@ describe('openrouter video generation', () => {
     expect(submitUrl).toBe('https://openrouter.ai/api/v1/videos');
   });
 
-  it('does NOT send Authorization header on the download request (unsigned_urls)', async () => {
+  it('does NOT send Authorization header on the download request (third-party CDN)', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResp({
         id: 'job-noauth',
@@ -302,17 +302,40 @@ describe('openrouter video generation', () => {
 
     await generateMedia(argsWithPaths());
 
-    // The download call is the last (3rd) fetch invocation.
     const dlCall = fetchMock.mock.calls[2]!;
     const dlUrl = dlCall[0] as string;
     expect(dlUrl).toBe('https://cdn.third-party.example/videos/job-noauth.mp4');
 
-    // Must NOT contain an authorization header — sending the user's
-    // OpenRouter API key to the CDN would leak credentials.
     const dlOpts = dlCall[1];
     const dlHeaders = dlOpts?.headers ?? {};
     expect(dlHeaders).not.toHaveProperty('authorization');
     expect(dlHeaders).not.toHaveProperty('Authorization');
+  });
+
+  it('DOES send Authorization header if the download URL is proxied via openrouter.ai', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-proxy',
+        polling_url: 'https://openrouter.ai/api/v1/videos/job-proxy',
+        status: 'pending',
+      }, 202))
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-proxy',
+        status: 'completed',
+        unsigned_urls: ['https://openrouter.ai/api/v1/videos/job-proxy/content?index=0'],
+      }))
+      .mockResolvedValueOnce(mp4Resp());
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generateMedia(argsWithPaths());
+
+    const dlCall = fetchMock.mock.calls[2]!;
+    const dlUrl = dlCall[0] as string;
+    expect(dlUrl).toBe('https://openrouter.ai/api/v1/videos/job-proxy/content?index=0');
+
+    const dlOpts = dlCall[1];
+    const dlHeaders = (dlOpts?.headers as Record<string, string>) ?? {};
+    expect(dlHeaders.authorization).toBe('Bearer sk-or-test-key-1234');
   });
 });
 
