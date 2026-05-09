@@ -284,4 +284,34 @@ describe('openrouter video generation', () => {
     const submitUrl = fetchMock.mock.calls[0]![0] as string;
     expect(submitUrl).toBe('https://openrouter.ai/api/v1/videos');
   });
+
+  it('does NOT send Authorization header on the download request (unsigned_urls)', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-noauth',
+        polling_url: 'https://openrouter.ai/api/v1/videos/job-noauth',
+        status: 'pending',
+      }, 202))
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-noauth',
+        status: 'completed',
+        unsigned_urls: ['https://cdn.third-party.example/videos/job-noauth.mp4'],
+      }))
+      .mockResolvedValueOnce(mp4Resp());
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generateMedia(argsWithPaths());
+
+    // The download call is the last (3rd) fetch invocation.
+    const dlCall = fetchMock.mock.calls[2]!;
+    const dlUrl = dlCall[0] as string;
+    expect(dlUrl).toBe('https://cdn.third-party.example/videos/job-noauth.mp4');
+
+    // Must NOT contain an authorization header — sending the user's
+    // OpenRouter API key to the CDN would leak credentials.
+    const dlOpts = dlCall[1];
+    const dlHeaders = dlOpts?.headers ?? {};
+    expect(dlHeaders).not.toHaveProperty('authorization');
+    expect(dlHeaders).not.toHaveProperty('Authorization');
+  });
 });

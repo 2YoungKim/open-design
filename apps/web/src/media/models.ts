@@ -342,10 +342,9 @@ export const IMAGE_MODELS: MediaModel[] = [
   // Midjourney via community proxies.
   { id: 'midjourney-v7', label: 'midjourney-v7', hint: 'Midjourney · via proxy', provider: 'midjourney', caps: ['t2i'] },
 
-  // OpenRouter — unified gateway for image generation models.
-  { id: 'openrouter/google/gemini-2.5-flash-image', label: 'gemini-flash-image (OR)', hint: 'OpenRouter · Gemini', provider: 'openrouter', caps: ['t2i'] },
-  { id: 'openrouter/black-forest-labs/flux-1.1-pro', label: 'flux-1.1-pro (OR)', hint: 'OpenRouter · BFL', provider: 'openrouter', caps: ['t2i'] },
-  { id: 'openrouter/recraft/recraft-v3', label: 'recraft-v3 (OR)', hint: 'OpenRouter · Recraft', provider: 'openrouter', caps: ['t2i'] },
+  // OpenRouter image models are deferred until the chat-completions-based
+  // image adapter lands (Phase 3). Registering them here without a backing
+  // renderer would cause agents to hit the stub/503 fallback path.
 ];
 
 /**

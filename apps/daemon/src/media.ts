@@ -1547,12 +1547,11 @@ async function renderOpenRouterVideo(
   }
 
   // ── Step 3: Download the video binary ──────────────────────────────
+  // unsigned_urls are pre-authorised by OpenRouter — do NOT send our
+  // API key to the file host, as that would leak credentials to a
+  // third-party CDN/storage origin.
   const contentUrl = videoUrls[0]!;
-  const dlResp = await fetch(contentUrl, {
-    headers: {
-      'authorization': `Bearer ${credentials.apiKey}`,
-    },
-  });
+  const dlResp = await fetch(contentUrl);
   if (!dlResp.ok) {
     throw new Error(`openrouter video download ${dlResp.status}`);
   }
