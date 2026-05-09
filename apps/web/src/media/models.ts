@@ -137,7 +137,7 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
     id: 'openrouter',
     label: 'OpenRouter',
     hint: 'Unified gateway — FLUX / Seedance / Veo / Gemini Image',
-    integrated: false,
+    integrated: true,
     defaultBaseUrl: 'https://openrouter.ai/api/v1',
     docsUrl: 'https://openrouter.ai/settings/keys',
   },

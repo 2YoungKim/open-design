@@ -33,8 +33,8 @@ describe('KNOWN_PROVIDERS', () => {
     expect(openRouter).toBeDefined();
     expect(openRouter?.baseUrl).toBe('https://openrouter.ai/api/v1');
     expect(openRouter?.protocol).toBe('openai');
-    expect(openRouter?.models).toContain('anthropic/claude-sonnet-4.5');
-    expect(openRouter?.models).toContain('anthropic/claude-haiku-4.5');
+    expect(openRouter?.models).toContain('anthropic/claude-3.7-sonnet');
+    expect(openRouter?.models).toContain('anthropic/claude-3.5-haiku');
   });
 });
 
