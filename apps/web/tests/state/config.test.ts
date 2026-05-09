@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_CONFIG,
+  KNOWN_PROVIDERS,
   loadConfig,
   mergeDaemonConfig,
   saveConfig,
@@ -24,6 +25,17 @@ vi.stubGlobal('localStorage', {
   clear: vi.fn(() => {
     store.clear();
   }),
+});
+
+describe('KNOWN_PROVIDERS', () => {
+  it('includes an OpenRouter preset with correct baseUrl and models', () => {
+    const openRouter = KNOWN_PROVIDERS.find((p) => p.label === 'OpenRouter');
+    expect(openRouter).toBeDefined();
+    expect(openRouter?.baseUrl).toBe('https://openrouter.ai/api/v1');
+    expect(openRouter?.protocol).toBe('openai');
+    expect(openRouter?.models).toContain('anthropic/claude-sonnet-4.5');
+    expect(openRouter?.models).toContain('anthropic/claude-haiku-4.5');
+  });
 });
 
 describe('syncComposioConfigToDaemon', () => {
