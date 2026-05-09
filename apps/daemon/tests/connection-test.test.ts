@@ -778,6 +778,37 @@ describe('POST /api/test/connection provider mode', () => {
       kind: 'timeout',
     });
   });
+
+  it('forwards OpenRouter attribution headers for openrouter.ai URLs', async () => {
+    const fetchMock = passThroughOrUpstream(() =>
+      jsonResponse({
+        choices: [{ message: { role: 'assistant', content: 'ok' } }],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await realFetch(`${baseUrl}/api/test/connection`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'provider',
+        protocol: 'openai',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        apiKey: 'or-key',
+        model: 'openai/gpt-4o',
+      }),
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.ok).toBe(true);
+    const upstream = fetchMock.mock.calls.find(
+      ([input]) => !String(input).startsWith(baseUrl),
+    );
+    expect(upstream).toBeDefined();
+    const [, upstreamInit] = upstream!;
+    const headers = upstreamInit?.headers as Record<string, string>;
+    expect(headers['HTTP-Referer']).toBe('https://opendesign.dev');
+    expect(headers['X-Title']).toBe('Open Design');
+  });
 });
 
 describe('POST /api/test/connection agent mode', () => {

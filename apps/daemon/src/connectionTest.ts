@@ -343,7 +343,10 @@ function buildProviderCall(input: ProviderTestRequest): ProviderCallShape {
           authorization: `Bearer ${apiKey}`,
           // OpenRouter recommends these headers for app attribution
           // (https://openrouter.ai/docs/app-attribution).
-          ...(baseUrl.includes('openrouter') ? {
+          ...((() => {
+            try { return new URL(baseUrl).hostname === 'openrouter.ai'; }
+            catch { return false; }
+          })() ? {
             'HTTP-Referer': 'https://opendesign.dev',
             'X-Title': 'Open Design',
           } : {}),

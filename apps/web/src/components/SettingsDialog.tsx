@@ -3384,13 +3384,11 @@ function MediaProvidersSection({
                     value={entry.apiKey}
                     placeholder={t('settings.mediaProviderPlaceholder')}
                     aria-label={`${provider.label} ${t('settings.mediaProviderApiKey')}`}
-                    disabled={disabled}
                     onChange={(e) => updateProvider(provider, { apiKey: e.target.value })}
                   />
                   <button
                     type="button"
                     className="secret-visibility-button"
-                    disabled={disabled}
                     aria-label={
                       apiKeyVisible
                         ? `${provider.label} ${t('settings.hideKey')}`
@@ -3406,7 +3404,6 @@ function MediaProvidersSection({
                   value={entry.baseUrl}
                   placeholder={provider.defaultBaseUrl || t('settings.mediaProviderBaseUrlPlaceholder')}
                   aria-label={`${provider.label} ${t('settings.mediaProviderBaseUrl')}`}
-                  disabled={disabled}
                   onChange={(e) => updateProvider(provider, { baseUrl: e.target.value })}
                 />
                 {supportsCustomModel ? (
@@ -3414,7 +3411,6 @@ function MediaProvidersSection({
                     value={entry.model ?? ''}
                     placeholder="gemini-3.1-flash-image-preview"
                     aria-label={`${provider.label} model`}
-                    disabled={disabled}
                     onChange={(e) => updateProvider(provider, { model: e.target.value })}
                   />
                 ) : null}

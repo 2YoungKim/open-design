@@ -6622,7 +6622,7 @@ export async function startServer({
           Authorization: `Bearer ${apiKey}`,
           // OpenRouter recommends these headers for app attribution
           // (https://openrouter.ai/docs/app-attribution).
-          ...(baseUrl.includes('openrouter') ? {
+          ...(validated.parsed.hostname === 'openrouter.ai' ? {
             'HTTP-Referer': 'https://opendesign.dev',
             'X-Title': 'Open Design',
           } : {}),

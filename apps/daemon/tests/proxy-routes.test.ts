@@ -487,6 +487,31 @@ describe('API proxy routes', () => {
       generationConfig: { maxOutputTokens: 1234 },
     });
   });
+
+  it('forwards OpenRouter attribution headers for openrouter.ai proxy requests', async () => {
+    const fetchMock = vi.fn((input: FetchInput, init?: FetchInit) => {
+      const url = String(input);
+      if (url.startsWith(baseUrl)) return realFetch(input, init);
+      return Promise.resolve(sseResponse('data: [DONE]\n\n'));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await realFetch(`${baseUrl}/api/proxy/openai/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        baseUrl: 'https://openrouter.ai/api/v1',
+        apiKey: 'or-key',
+        model: 'anthropic/claude-3-5-sonnet',
+        messages: [{ role: 'user', content: 'hello' }],
+      }),
+    });
+
+    const [, upstreamInit] = fetchMock.mock.calls[0]!;
+    const headers = upstreamInit?.headers as Record<string, string>;
+    expect(headers['HTTP-Referer']).toBe('https://opendesign.dev');
+    expect(headers['X-Title']).toBe('Open Design');
+  });
 });
 
 function sseResponse(text: string): Response {

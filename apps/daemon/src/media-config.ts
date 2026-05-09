@@ -61,6 +61,7 @@ const ENV_KEYS: Record<string, string[]> = {
   // OpenAI examples use — we share the openai provider slot so a user
   // who pastes an Azure deployment URL into the OpenAI Base URL field
   // gets the credential picked up automatically.
+  openrouter: ['OD_OPENROUTER_API_KEY', 'OPENROUTER_API_KEY'],
   openai: [
     'OD_OPENAI_API_KEY',
     'OPENAI_API_KEY',
