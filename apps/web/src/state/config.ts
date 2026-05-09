@@ -248,10 +248,10 @@ export const KNOWN_PROVIDERS: KnownProvider[] = [
     label: 'OpenRouter',
     protocol: 'openai',
     baseUrl: 'https://openrouter.ai/api/v1',
-    model: 'anthropic/claude-sonnet-4.5',
+    model: 'anthropic/claude-3.7-sonnet',
     models: [
-      'anthropic/claude-sonnet-4.5',
-      'anthropic/claude-haiku-4.5',
+      'anthropic/claude-3.7-sonnet',
+      'anthropic/claude-3.5-haiku',
       'openai/gpt-4o',
       'openai/o3-mini',
       'google/gemini-2.5-flash',
