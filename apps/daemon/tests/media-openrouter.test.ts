@@ -315,3 +315,205 @@ describe('openrouter video generation', () => {
     expect(dlHeaders).not.toHaveProperty('Authorization');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// OpenRouter IMAGE generation tests (synchronous, via chat/completions)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('openrouter image generation', () => {
+  let root: string;
+  let projectRoot: string;
+  let projectsRoot: string;
+  const realFetch = globalThis.fetch;
+  const originalMediaConfigDir = process.env.OD_MEDIA_CONFIG_DIR;
+  const originalDataDir = process.env.OD_DATA_DIR;
+
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'od-openrouter-image-'));
+    projectRoot = path.join(root, 'project-root');
+    projectsRoot = path.join(projectRoot, '.od', 'projects');
+    await mkdir(projectsRoot, { recursive: true });
+    delete process.env.OD_MEDIA_CONFIG_DIR;
+    delete process.env.OD_DATA_DIR;
+    process.env.OD_OPENROUTER_API_KEY = 'sk-or-img-test-key';
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = realFetch;
+    delete process.env.OD_OPENROUTER_API_KEY;
+    if (originalMediaConfigDir == null) {
+      delete process.env.OD_MEDIA_CONFIG_DIR;
+    } else {
+      process.env.OD_MEDIA_CONFIG_DIR = originalMediaConfigDir;
+    }
+    if (originalDataDir == null) {
+      delete process.env.OD_DATA_DIR;
+    } else {
+      process.env.OD_DATA_DIR = originalDataDir;
+    }
+    await rm(root, { recursive: true, force: true });
+  });
+
+  // Tiny 1x1 PNG as base64.
+  const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2uoAAAAASUVORK5CYII=';
+  const PNG_DATA_URL = `data:image/png;base64,${PNG_B64}`;
+
+  function imageArgs(overrides?: Record<string, unknown>) {
+    return {
+      projectRoot,
+      projectsRoot,
+      projectId: 'project-img',
+      surface: 'image' as const,
+      model: 'openrouter/google/gemini-2.5-flash-image',
+      prompt: 'A watercolor sunset over mountains',
+      aspect: '16:9',
+      output: 'sunset.png',
+      ...overrides,
+    };
+  }
+
+  function chatResp(images: unknown[], status = 200) {
+    return new Response(JSON.stringify({
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: 'Here is the generated image.',
+          images,
+        },
+      }],
+    }), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  // ─── tests ────────────────────────────────────────────────────────
+
+  it('generates an image via chat/completions with base64 response', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      chatResp([{ type: 'image_url', image_url: { url: PNG_DATA_URL } }]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await generateMedia(imageArgs());
+
+    expect(result.surface).toBe('image');
+    expect(result.providerId).toBe('openrouter');
+    expect(result.providerNote).toContain('gemini-2.5-flash-image');
+    expect(result.providerNote).toContain('16:9');
+    expect(result.name).toBe('sunset.png');
+
+    const bytes = await readFile(path.join(projectsRoot, 'project-img', 'sunset.png'));
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it('strips the openrouter/ prefix for the wire model name', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      chatResp([{ type: 'image_url', image_url: { url: PNG_DATA_URL } }]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generateMedia(imageArgs());
+
+    const [, opts] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse(opts.body);
+    expect(body.model).toBe('google/gemini-2.5-flash-image');
+    expect(body.model).not.toContain('openrouter/');
+  });
+
+  it('sends OpenRouter attribution headers', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      chatResp([{ type: 'image_url', image_url: { url: PNG_DATA_URL } }]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generateMedia(imageArgs());
+
+    const headers = fetchMock.mock.calls[0]![1].headers;
+    expect(headers['HTTP-Referer']).toBe('https://opendesign.dev');
+    expect(headers['X-Title']).toBe('Open Design');
+    expect(headers.authorization).toBe('Bearer sk-or-img-test-key');
+  });
+
+  it('uses /chat/completions endpoint, not /videos', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      chatResp([{ type: 'image_url', image_url: { url: PNG_DATA_URL } }]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generateMedia(imageArgs());
+
+    const url = fetchMock.mock.calls[0]![0] as string;
+    expect(url).toBe('https://openrouter.ai/api/v1/chat/completions');
+    expect(url).not.toContain('/videos');
+  });
+
+  it('uses modalities ["image", "text"] for Gemini models', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      chatResp([{ type: 'image_url', image_url: { url: PNG_DATA_URL } }]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generateMedia(imageArgs({ model: 'openrouter/google/gemini-2.5-flash-image' }));
+
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body);
+    expect(body.modalities).toEqual(['image', 'text']);
+  });
+
+  it('uses modalities ["image"] for non-Gemini models (Flux)', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      chatResp([{ type: 'image_url', image_url: { url: PNG_DATA_URL } }]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generateMedia(imageArgs({ model: 'openrouter/black-forest-labs/flux-1.1-pro' }));
+
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body);
+    expect(body.modalities).toEqual(['image']);
+  });
+
+  it('passes image_config.aspect_ratio through', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      chatResp([{ type: 'image_url', image_url: { url: PNG_DATA_URL } }]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generateMedia(imageArgs({ aspect: '9:16' }));
+
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body);
+    expect(body.image_config.aspect_ratio).toBe('9:16');
+    expect(body.image_config.image_size).toBe('1K');
+  });
+
+  it('throws on HTTP error with descriptive message', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { message: 'insufficient credits' } }), {
+        status: 402,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(generateMedia(imageArgs())).rejects.toThrow(
+      /openrouter image 402/,
+    );
+  });
+
+  it('throws when response contains no images', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        choices: [{
+          message: { role: 'assistant', content: 'I cannot generate images.' },
+        }],
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(generateMedia(imageArgs())).rejects.toThrow(
+      /no images/,
+    );
+  });
+});

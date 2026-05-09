@@ -27,10 +27,12 @@
 //                              /v1/images/generations for grok-imagine-image
 //                              and async /v1/videos/generations + GET poll
 //                              for grok-imagine-video (t2v + i2v + audio)
-//   * provider 'openrouter' → OpenRouter unified video generation API:
-//                              async POST /api/v1/videos + polling for
-//                              Seedance 2.0, Veo 3.1, Wan 2.7 etc.
-//                              (video only — image uses chat completions)
+//   * provider 'openrouter' → OpenRouter unified media API:
+//                              synchronous POST /chat/completions with
+//                              modalities:["image"] for Gemini Flash,
+//                              Flux, Recraft (t2i) and async POST
+//                              /api/v1/videos + polling for Seedance 2.0,
+//                              Veo 3.1, Wan 2.7 (video)
 //
 // The fallback stub handlers are gated behind OD_MEDIA_ALLOW_STUBS=1; in
 // release builds they throw StubProviderDisabledError (mapped to HTTP
@@ -445,6 +447,11 @@ export async function generateMedia(args: {
       suggestedExt = result.suggestedExt;
     } else if (def.provider === 'fishaudio' && surface === 'audio') {
       const result = await renderFishAudioTTS(ctx, credentials);
+      bytes = result.bytes;
+      providerNote = result.providerNote;
+      suggestedExt = result.suggestedExt;
+    } else if (def.provider === 'openrouter' && surface === 'image') {
+      const result = await renderOpenRouterImage(ctx, credentials);
       bytes = result.bytes;
       providerNote = result.providerNote;
       suggestedExt = result.suggestedExt;
@@ -1377,6 +1384,125 @@ function grokAspectFor(aspect?: string): string {
 //
 // Docs: https://openrouter.ai/docs/guides/overview/multimodal/video-generation
 //
+// ---------------------------------------------------------------------------
+// OpenRouter image generation via Chat Completions API
+// ---------------------------------------------------------------------------
+// Unlike the dedicated /videos endpoint (async polling), image generation
+// goes through /chat/completions with `modalities: ["image"]` (or
+// `["image", "text"]` for multi-modal models like Gemini).  The response
+// embeds generated images as base64 data URLs in
+// `choices[0].message.images[].image_url.url`.
+//
+// Model IDs follow the same `openrouter/`-prefix convention as video.
+// ---------------------------------------------------------------------------
+
+async function renderOpenRouterImage(
+  ctx: MediaContext,
+  credentials: ProviderConfig,
+): Promise<RenderResult> {
+  if (!credentials.apiKey) {
+    throw new Error(
+      'no OpenRouter API key — configure it in Settings or set OPENROUTER_API_KEY',
+    );
+  }
+  const baseUrl = (credentials.baseUrl || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
+
+  // Strip the `openrouter/` catalogue prefix so the wire model name
+  // matches OpenRouter's canonical slug.
+  const wireModel = ctx.model.startsWith('openrouter/')
+    ? ctx.model.slice('openrouter/'.length)
+    : ctx.model;
+
+  // Multi-modal models (Gemini variants) accept both image and text
+  // output; image-only models (Flux, Recraft, Sourceful) only accept
+  // ["image"]. We use a simple heuristic on the slug.
+  const modalities: string[] = wireModel.includes('gemini')
+    ? ['image', 'text']
+    : ['image'];
+
+  const body: Record<string, unknown> = {
+    model: wireModel,
+    messages: [
+      {
+        role: 'user',
+        content: ctx.prompt || 'A high-quality reference image.',
+      },
+    ],
+    modalities,
+    stream: false,
+  };
+
+  // Pass aspect ratio + image size through image_config when specified.
+  const aspectRatio = openRouterAspectFor(ctx.aspect);
+  const imageConfig: Record<string, unknown> = {
+    aspect_ratio: aspectRatio,
+    image_size: '1K',
+  };
+  body.image_config = imageConfig;
+
+  const resp = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'authorization': `Bearer ${credentials.apiKey}`,
+      'content-type': 'application/json',
+      'HTTP-Referer': 'https://opendesign.dev',
+      'X-Title': 'Open Design',
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await resp.text();
+  if (!resp.ok) {
+    throw new Error(`openrouter image ${resp.status}: ${truncate(text, 240)}`);
+  }
+
+  let data: any;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`openrouter image non-JSON response: ${truncate(text, 200)}`);
+  }
+
+  // Extract the first generated image from the response.
+  const images: any[] | undefined =
+    data?.choices?.[0]?.message?.images;
+  if (!images || images.length === 0) {
+    throw new Error(
+      `openrouter image response contained no images for model ${wireModel}: `
+      + truncate(text, 200),
+    );
+  }
+
+  const dataUrl: string | undefined = images[0]?.image_url?.url;
+  if (!dataUrl) {
+    throw new Error(
+      `openrouter image response missing image_url.url: ${truncate(text, 200)}`,
+    );
+  }
+
+  // Strip the data URL prefix (e.g. "data:image/png;base64,") and
+  // decode the remaining base64 payload.
+  const b64Match = dataUrl.match(/^data:image\/[^;]+;base64,(.+)$/s);
+  let bytes: Buffer;
+  if (b64Match) {
+    bytes = Buffer.from(b64Match[1]!, 'base64');
+  } else if (dataUrl.startsWith('http')) {
+    // Some models may return a plain URL instead of inline base64.
+    const imgResp = await fetch(dataUrl);
+    if (!imgResp.ok) throw new Error(`openrouter image download ${imgResp.status}`);
+    bytes = Buffer.from(await imgResp.arrayBuffer());
+  } else {
+    // Assume raw base64 without prefix.
+    bytes = Buffer.from(dataUrl, 'base64');
+  }
+
+  return {
+    bytes,
+    providerNote: `openrouter/${wireModel} · ${aspectRatio} · ${bytes.length} bytes`,
+    suggestedExt: sniffImageExt(bytes),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // OpenRouter's video API is a normalised, asynchronous interface sitting
 // in front of multiple upstream providers (ByteDance Seedance 2.0,
 // Google Veo 3.1, Alibaba Wan 2.7, etc.). The workflow mirrors the
