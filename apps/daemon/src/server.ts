@@ -2047,7 +2047,7 @@ export interface StartServerOptions {
   returnServer?: boolean;
 }
 
-const DEFAULT_CHAT_RUN_INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_CHAT_RUN_INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_CHAT_RUN_INACTIVITY_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 function resolveChatRunInactivityTimeoutMs() {

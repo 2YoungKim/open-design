@@ -1605,7 +1605,7 @@ async function renderOpenRouterVideo(
   const maxMs =
     Number.isFinite(configuredMaxMs) && configuredMaxMs >= 60_000
       ? configuredMaxMs
-      : 10 * 60 * 1000; // 10 minutes default
+      : 30 * 60 * 1000; // 30 minutes default
 
   let lastStatus = submitData?.status || 'pending';
   let videoUrls: string[] | null = null;
