@@ -1543,11 +1543,13 @@ async function renderOpenRouterVideo(
   const aspectRatio = openRouterAspectFor(ctx.aspect);
 
   // Build the request body.
+  const durationSec = ctx.length || 5;
   const body: Record<string, unknown> = {
     model: wireModel,
     prompt: ctx.prompt || 'A short cinematic clip.',
     aspect_ratio: aspectRatio,
     resolution: '720p',
+    duration: durationSec,
   };
 
   // Image-to-video: pass the reference image as a first_frame via

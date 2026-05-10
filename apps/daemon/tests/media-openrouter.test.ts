@@ -337,6 +337,51 @@ describe('openrouter video generation', () => {
     const dlHeaders = (dlOpts?.headers as Record<string, string>) ?? {};
     expect(dlHeaders.authorization).toBe('Bearer sk-or-test-key-1234');
   });
+
+  it('includes the user-specified duration in the submitted body', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-dur',
+        polling_url: 'https://openrouter.ai/api/v1/videos/job-dur',
+        status: 'pending',
+      }, 202))
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-dur',
+        status: 'completed',
+        unsigned_urls: ['https://example.com/dl.mp4'],
+      }))
+      .mockResolvedValueOnce(mp4Resp());
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generateMedia({ ...argsWithPaths(), length: 10 });
+
+    const [, submitOpts] = fetchMock.mock.calls[0]!;
+    const submitBody = JSON.parse(submitOpts.body);
+    expect(submitBody.duration).toBe(10);
+  });
+
+  it('defaults duration to 5 when length is not specified', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-dur-def',
+        polling_url: 'https://openrouter.ai/api/v1/videos/job-dur-def',
+        status: 'pending',
+      }, 202))
+      .mockResolvedValueOnce(jsonResp({
+        id: 'job-dur-def',
+        status: 'completed',
+        unsigned_urls: ['https://example.com/dl.mp4'],
+      }))
+      .mockResolvedValueOnce(mp4Resp());
+    vi.stubGlobal('fetch', fetchMock);
+
+    // No `length` key in args — should fall back to 5
+    await generateMedia(argsWithPaths());
+
+    const [, submitOpts] = fetchMock.mock.calls[0]!;
+    const submitBody = JSON.parse(submitOpts.body);
+    expect(submitBody.duration).toBe(5);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
